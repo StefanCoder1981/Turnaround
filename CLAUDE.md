@@ -27,6 +27,8 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
 - `app.py` – gesamte UI: Seitenleiste (Parameter) → Daten laden (in `st.session_state`, Schlüssel =
   Ticker-Tupel) → vorläufiges Scoring → News nur für Top-N-Kandidaten nachladen → finales Scoring → 8 Tabs.
   Scoring läuft bei jedem Rerun neu (billig); nur Downloads sind gecacht.
+  Elemente vor `st.tabs` müssen bei jedem Lauf gleich sein (Ladebalken nur im festen Platzhalter `load_box`),
+  und die Tabs haben `key="main_tabs"` – sonst springt die App nach einem Widget-Klick auf den ersten Tab.
 - `turnaround/data.py` – yfinance-Kurse (Bulk-Download) und Fundamentaldaten (Threadpool), Pickle-Cache
   in `cache/` (Kurse 12 h, Fundamental 24 h). `derive_fundamentals` leitet Margentrend, Gewinnwende,
   FCF, Schuldenänderung ab.

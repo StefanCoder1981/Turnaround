@@ -196,6 +196,10 @@ st.title("Turnaround-Scanner")
 st.caption("Findet Turnarounds der letzten Jahre, gleicht Kurs-, Fundamental- und Nachrichtendaten ab und schlägt "
            "ein Musterportfolio möglicher künftiger Turnaround-Kandidaten vor. **Keine Anlageberatung.**")
 
+# Fester Platzhalter für Ladebalken: Er muss bei jedem Lauf existieren, sonst verschieben sich die folgenden
+# Elemente und Streamlit baut die Tabs neu auf (Sprung zurück auf den ersten Tab).
+load_box = st.empty()
+
 if not tickers:
     st.info("Bitte links mindestens ein Universum oder eigene Ticker wählen.")
     st.stop()
@@ -207,15 +211,14 @@ if refresh:
 
 key = tuple(tickers)
 if st.session_state.get("loaded_key") != key:
-    box = st.empty()
-    with box.container():
+    with load_box.container():
         bar = st.progress(0.0, text="Starte …")
         prices = data.load_prices(tickers, years=6, progress=progress_cb(bar))
         if prices.empty:
             st.error("Es konnten keine Kursdaten geladen werden. Internetverbindung prüfen.")
             st.stop()
         funds = data.load_fundamentals(list(prices.columns), progress=progress_cb(bar))
-    box.empty()
+    load_box.empty()
     st.session_state.update(loaded_key=key, prices=prices, funds=funds)
     st.session_state.setdefault("news", {})
 
@@ -233,11 +236,10 @@ need = list(pre["Ticker"]) if news_all else list(pre[pre["Kandidat"]].head(news_
 to_fetch = [t for t in need if t not in news_store]
 if to_fetch:
     names = pre.set_index("Ticker")["Name"].to_dict()
-    box = st.empty()
-    with box.container():
+    with load_box.container():
         bar = st.progress(0.0, text="Lade Nachrichten …")
         news_store.update(news.load_news_bulk([(t, names.get(t)) for t in to_fetch], progress=progress_cb(bar)))
-    box.empty()
+    load_box.empty()
 news_summary = {t: news.summarize_news(df) for t, df in news_store.items()}
 scored = analysis.analyze_universe(prices, funds, news_summary, params)
 scored["News-Abgleich"] = scored.apply(news_alignment, axis=1)
@@ -259,7 +261,8 @@ c4.metric("Aktuelle Kandidaten", len(cands), help=f"Mind. {cand_dd:.0%} unter de
 c5.metric("Ø Score Portfolio", f"{pf['Score'].mean():.0f}" if not pf.empty else "–")
 
 tabs = st.tabs(["📊 Übersicht", "🔄 Historische Turnarounds", "🎯 Kandidaten", "📰 News-Abgleich",
-                "💼 Musterportfolio", "🔍 Einzelanalyse", "🧪 Signal-Check", "🏦 Depots", "ℹ️ Methodik"])
+                "💼 Musterportfolio", "🔍 Einzelanalyse", "🧪 Signal-Check", "🏦 Depots", "ℹ️ Methodik"],
+               key="main_tabs")  # fester Schlüssel: aktiver Tab bleibt beim Neuzeichnen erhalten
 
 # --------------------------------------------------------------------------- #
 # Übersicht
@@ -441,8 +444,8 @@ with tabs[4]:
             alloc["Rendite Zeitraum"] = portfolio.period_returns(prices, alloc["Ticker"], start_day).to_numpy()
             alloc["Begründung"] = [reasoning(r, news_store.get(r["Ticker"])) for _, r in alloc.iterrows()]
             av = pct(alloc, ["Gewicht", "Abstand Hoch", "Rendite Zeitraum"])
-            st.dataframe(av[["Name", "Ticker", "Sektor", "Phase", "Score", "Gewicht", "Betrag", "Kurs", "Währung",
-                             "Stück (ca.)", "Abstand Hoch", "Rendite Zeitraum", "Begründung"]],
+            st.dataframe(av[["Name", "Ticker", "Sektor", "Phase", "Score", "Rendite Zeitraum", "Gewicht", "Betrag",
+                             "Kurs", "Währung", "Stück (ca.)", "Abstand Hoch", "Begründung"]],
                          hide_index=True, width="stretch",
                          column_config={"Score": score_col(), "Gewicht": PCT("Gewicht"),
                                         "Betrag": st.column_config.NumberColumn(format="%.0f"),
@@ -479,9 +482,8 @@ with tabs[4]:
             m2.metric(f"Rendite {period}", f"{total / pf_amount - 1:+.1%}")
             m3.metric("Universum", f"{uni_perf.iloc[-1] - 1:+.1%}" if len(uni_perf) else "–")
             hv = pct(hv, ["Gewicht", "Abstand Hoch", "Rendite Zeitraum"])
-            st.dataframe(hv[["Name", "Ticker", "Sektor", "Score", "Gewicht", "Betrag", "Kurs", "Kurs heute",
-                             "Währung", "Abstand Hoch", "Rendite Zeitraum", "Wert heute", "Heute im Portfolio",
-                             "Risiken"]],
+            st.dataframe(hv[["Name", "Ticker", "Sektor", "Score", "Rendite Zeitraum", "Gewicht", "Betrag", "Wert heute",
+                             "Kurs", "Kurs heute", "Währung", "Abstand Hoch", "Heute im Portfolio", "Risiken"]],
                          hide_index=True, width="stretch",
                          column_config={"Score": score_col("Kurs-Score damals"), "Gewicht": PCT("Gewicht"),
                                         "Betrag": st.column_config.NumberColumn(format="%.0f"),
