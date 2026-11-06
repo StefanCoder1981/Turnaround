@@ -11,6 +11,11 @@ from datetime import date, timedelta
 
 from .base import AccountSummary, BrokerError, Holding, HttpClient, env, to_float
 
+WRITE_PERMISSION_HINT = (
+    "eToro lehnt die Order ab (HTTP 403): Der Schlüssel hat keine Schreibrechte für das Demokonto. "
+    "In eToro unter Einstellungen → Trading → API Key Management einen Schlüssel mit Umgebung „Demo“ und "
+    "Berechtigung „Write“ anlegen und als ETORO_DEMO_API_KEY / ETORO_DEMO_USER_KEY in .env eintragen.")
+
 TYPE_LABEL = {"Stocks": "Aktie", "ETF": "ETF", "Crypto": "Krypto", "Commodity": "Rohstoff", "Indices": "Index",
               "Forex": "Devisen", "Bonds": "Anleihe", "CFD": "CFD"}
 
@@ -27,7 +32,11 @@ class EToroClient(HttpClient):
 
     @classmethod
     def from_env(cls, account: str = "real") -> "EToroClient | None":
+        """Für das Demokonto haben ETORO_DEMO_API_KEY/ETORO_DEMO_USER_KEY Vorrang (Schlüssel mit Schreibrecht);
+        sonst werden ETORO_API_KEY/ETORO_USER_KEY verwendet."""
         k, u = env("ETORO_API_KEY"), env("ETORO_USER_KEY")
+        if account == "demo" and env("ETORO_DEMO_API_KEY") and env("ETORO_DEMO_USER_KEY"):
+            k, u = env("ETORO_DEMO_API_KEY"), env("ETORO_DEMO_USER_KEY")
         return cls(k, u, account) if k and u else None
 
     @property
@@ -70,6 +79,60 @@ class EToroClient(HttpClient):
         min_date = (date.today() - timedelta(days=min(days, 364))).isoformat()
         data = self.get("/api/v1/trading/info/trade/history", {"minDate": min_date, "pageSize": page_size})
         return data if isinstance(data, list) else []
+
+    def resolve_symbols(self, symbols: list[str]) -> dict[str, dict]:
+        """Yahoo-/eToro-Symbol -> Instrument. Bei mehreren Börsenplätzen gewinnt die Hauptnotierung
+        (kleinste instrumentId). Nicht handelbare Symbole fehlen im Ergebnis."""
+        out: dict[str, dict] = {}
+        for i in range(0, len(symbols), 50):
+            chunk = [s.upper() for s in symbols[i:i + 50]]
+            try:
+                data = self.get("/api/v2/market-data/instruments", {"symbols": ",".join(chunk), "pageSize": 100})
+            except BrokerError as exc:
+                if "404" in str(exc):  # keines der Symbole gefunden
+                    continue
+                raise
+            for r in data.get("results", []):
+                sym = str(r.get("symbol", "")).upper()
+                if sym in chunk and (sym not in out or r["instrumentId"] < out[sym]["instrumentId"]):
+                    out[sym] = r
+        return out
+
+    # --- Orders: ausschließlich Demokonto -------------------------------------
+    def _require_demo(self) -> None:
+        if self.account != "demo":
+            raise BrokerError("Orders sind nur im eToro-Demokonto freigeschaltet.")
+
+    def _post_order(self, path: str, body: dict) -> dict:
+        try:
+            return self.post(path, body) or {}
+        except BrokerError as exc:
+            if "HTTP 403" in str(exc):
+                raise BrokerError(WRITE_PERMISSION_HINT) from None
+            raise
+
+    def open_demo_order(self, instrument_id: int, amount_usd: float) -> dict:
+        """Market-Kauf (Long, ohne Hebel) über einen USD-Betrag. 200 = angenommen, nicht ausgeführt."""
+        self._require_demo()
+        body = {"action": "open", "transaction": "buy", "instrumentId": int(instrument_id), "orderType": "mkt",
+                "amount": round(float(amount_usd), 2), "orderCurrency": "usd", "leverage": 1,
+                "stopLossType": "fixed"}
+        return self._post_order("/api/v2/trading/execution/demo/orders", body)
+
+    def close_demo_position(self, position_id: int, instrument_id: int, units: float | None = None) -> dict:
+        """Schließt eine Demo-Position ganz (units=None) oder teilweise."""
+        self._require_demo()
+        body = {"InstrumentID": int(instrument_id), "UnitsToDeduct": None if units is None else round(units, 6)}
+        return self._post_order(f"/api/v1/trading/execution/demo/market-close-orders/positions/{int(position_id)}",
+                                body)
+
+    def demo_open_status(self, order_id: int) -> dict:
+        self._require_demo()
+        return self.get("/api/v2/trading/info/demo/orders:lookup", {"orderId": int(order_id)}) or {}
+
+    def demo_close_status(self, order_id: int) -> dict:
+        self._require_demo()
+        return self.get(f"/api/v1/trading/info/demo/close-orders/{int(order_id)}") or {}
 
     # --- Aufbereitung ---------------------------------------------------------
     def holdings(self) -> tuple[AccountSummary, list[Holding]]:

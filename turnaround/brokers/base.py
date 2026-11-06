@@ -79,17 +79,26 @@ class HttpClient:
         return {}
 
     def get(self, path: str, params: dict | None = None):
+        return self._request("GET", path, params=params)
+
+    def post(self, path: str, body: dict):
+        """POST ohne automatische Wiederholung bei Verbindungsfehlern (keine doppelten Orders).
+        Nur HTTP 429 wird wiederholt – dann wurde die Anfrage nachweislich nicht angenommen."""
+        return self._request("POST", path, json=body)
+
+    def _request(self, method: str, path: str, params: dict | None = None, json: dict | None = None):
         url = f"{self.base_url}{path}"
         for attempt in range(self.max_retries + 1):
             try:
-                r = self.session.get(url, headers=self._headers(), params=params, timeout=self.timeout)
+                r = self.session.request(method, url, headers=self._headers(), params=params, json=json,
+                                         timeout=self.timeout)
             except requests.RequestException as exc:
                 raise BrokerError(f"Verbindung zu {self.base_url} fehlgeschlagen: {type(exc).__name__}") from None
             if r.status_code == 429 and attempt < self.max_retries:
                 wait = float(r.headers.get("Retry-After", "2") or 2)
                 time.sleep(min(wait, 10))
                 continue
-            if r.status_code in (200, 206):
+            if r.status_code in (200, 201, 202, 206):
                 try:
                     return r.json()
                 except ValueError:

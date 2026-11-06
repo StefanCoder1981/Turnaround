@@ -47,7 +47,7 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
 ## Broker-Anbindung (Bitpanda, eToro)
 
 - Schlüssel stehen in `.env` (Vorlage: `.env.example`): `FUSION_API_KEY`, optional `BITPANDA_API_KEY`,
-  `ETORO_API_KEY`, `ETORO_USER_KEY`. **Werte nie ausgeben, loggen oder committen**; zum Prüfen nur die
+  `ETORO_API_KEY`, `ETORO_USER_KEY`, optional `ETORO_DEMO_API_KEY`, `ETORO_DEMO_USER_KEY`. **Werte nie ausgeben, loggen oder committen**; zum Prüfen nur die
   Namen lesen (`sed -E 's/=.*//' .env`). `BrokerError`-Meldungen enthalten bewusst keine Header.
 - `base.py`: `HttpClient` (Timeout, 429 → `Retry-After`), Datenklassen `Holding`/`AccountSummary`.
 - `bitpanda.py`: `FusionClient` (`https://api.fusion.bitpanda.com`, Header `x-api-key`; `/v1/account`,
@@ -58,8 +58,20 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
   neue `x-request-id`). Positionen + GuV aus `/api/v1/trading/info/{real|demo}/pnl`, Namen über
   `/api/v2/market-data/instruments?instrumentsIds=` (sic), Kurse über `/api/v2/market-data/rates?instrumentIds=`.
   Limits: 60 Portfolio- bzw. 120 Marktdaten-Abfragen/Min. eToro-Symbole ≈ Yahoo-Ticker (Krypto → `-USD`).
-- Die UI (Tab „Depots“) cacht `brokers.fetch_all` 5 Minuten. **Keine Order-Endpunkte einbauen**, ohne dass
-  der Nutzer das ausdrücklich verlangt; dann zuerst gegen das eToro-Demokonto.
+- Die UI (Tab „Depots“) cacht `brokers.fetch_all` 5 Minuten.
+- **Orders nur im eToro-Demokonto** (Nutzerwunsch): `EToroClient.open_demo_order` / `close_demo_position`
+  prüfen `_require_demo()`; Echtgeld-Orders gibt es bewusst nicht – nicht ohne ausdrücklichen Auftrag ändern.
+  Kauf: `POST /api/v2/trading/execution/demo/orders` (camelCase, `amount` in USD, `leverage` 1),
+  Schließen: `POST /api/v1/trading/execution/demo/market-close-orders/positions/{id}` (PascalCase
+  `InstrumentID`, `UnitsToDeduct` null = ganz). Asynchron → Status über `demo/orders:lookup?orderId=` bzw.
+  `demo/close-orders/{orderId}`; Status 11 = wartet auf Marktöffnung. Max. 20 Order-Anfragen/Min. (`pause`).
+- Schreibrecht: eToro-Schlüssel gelten je Umgebung (Real/Demo) und Berechtigung (Read/Write). Optional
+  `ETORO_DEMO_API_KEY`/`ETORO_DEMO_USER_KEY` (Write) haben fürs Demokonto Vorrang; 403 → `WRITE_PERMISSION_HINT`,
+  `execute_plan` bricht dann ab. Stand 06.11.2026: vorhandener Schlüssel ist nur lesend (Test-Order → 403).
+- `rebalance.py`: `plan_rebalance` (rein, testbar) → `build_plan` (liest Demokonto) → `execute_plan`
+  (erst Verkäufe, Guthaben neu lesen, dann Käufe). Protokoll in `portfolios/demo_sync_log.jsonl`.
+  UI: Schalter `demo_sync` → Vorschau → Bestätigungs-Checkbox → Ausführen → Depot-Cache leeren, Schalter zurück.
+- Live-Test-Orders nur nach Rückfrage beim Nutzer, und nur im Demokonto.
 - Tests in `tests/test_brokers.py` laufen ohne Netz (simulierte Antworten über `monkeypatch` auf `get`).
 
 ## Darkmode

@@ -111,7 +111,7 @@ def test_errors_never_contain_keys(monkeypatch):
             return {"errors": [{"title": "Credentials / Access token wrong"}]}
 
     c = FusionClient("SUPER-SECRET-KEY")
-    monkeypatch.setattr(c.session, "get", lambda *a, **k: R())
+    monkeypatch.setattr(c.session, "request", lambda *a, **k: R())
     with pytest.raises(BrokerError) as exc:
         c.account()
     assert "SUPER-SECRET" not in str(exc.value) and "401" in str(exc.value)

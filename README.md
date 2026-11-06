@@ -30,7 +30,7 @@ DAX + MDAX/SDAX), danach kommt alles aus dem Cache in `cache/`.
 | Musterportfolio | Auswahl mit Sektor-Limit und Gewichtsobergrenze, Begründung je Position, Stückzahlen, Snapshots zum Nachverfolgen |
 | Einzelanalyse | Kurs mit 50/200-Tage-Linie, Score-Zusammensetzung, Umsatz/Ergebnis/Marge, Profil, News |
 | Signal-Check | Rollierender Test der Kurssignale an vergangenen Stichtagen |
-| Depots | Bestände aus Bitpanda und eToro (nur lesend), Abgleich mit Score und Musterportfolio |
+| Depots | Bestände aus Bitpanda und eToro, Abgleich mit Score und Musterportfolio; Schalter zum Angleichen des eToro-**Demo**kontos ans Musterportfolio (mit Vorschau und Bestätigung) |
 | Methodik | Erklärung aller Regeln |
 
 Alle Schwellen und Gewichte sind in der Seitenleiste einstellbar. Eigene Ticker im Yahoo-Format
@@ -38,14 +38,15 @@ Alle Schwellen und Gewichte sind in der Seitenleiste einstellbar. Eigene Ticker 
 
 ## Broker-Anbindung (optional)
 
-`.env.example` nach `.env` kopieren und Schlüssel eintragen – **nur mit Lese-Rechten**, die App führt keine
-Orders aus:
+`.env.example` nach `.env` kopieren und Schlüssel eintragen. Echtgeld-Konten werden nur gelesen; Orders
+führt die App ausschließlich im eToro-Demokonto aus:
 
 | Variable | Zweck |
 |---|---|
 | `FUSION_API_KEY` | Bitpanda Fusion (Krypto-Bestände, Kurse) |
 | `BITPANDA_API_KEY` | optional: klassische Bitpanda-API (Hauptkonto inkl. Aktien/ETFs) |
-| `ETORO_API_KEY`, `ETORO_USER_KEY` | eToro, Echtgeld- oder Demokonto |
+| `ETORO_API_KEY`, `ETORO_USER_KEY` | eToro, Echtgeld- oder Demokonto (Lesen) |
+| `ETORO_DEMO_API_KEY`, `ETORO_DEMO_USER_KEY` | optional: eToro-Demo-Schlüssel mit „Write“ für das Angleichen |
 
 ## Aufbau
 

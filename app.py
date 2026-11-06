@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from turnaround import analysis, brokers, charts, data, news, portfolio
+from turnaround.brokers import rebalance
 from turnaround.universe import DEFAULT_UNIVERSES, UNIVERSES, build_universe
 
 st.set_page_config(page_title="Turnaround-Scanner", page_icon="🔄", layout="wide")
@@ -582,8 +583,8 @@ def load_broker_data(etoro_account: str):
 
 
 with tabs[7]:
-    st.markdown("Bestände aus den angebundenen Broker-Konten – **nur lesend**, es werden keine Orders ausgeführt. "
-                "Die Positionen werden mit dem Turnaround-Score und dem Musterportfolio abgeglichen.")
+    st.markdown("Bestände aus den angebundenen Broker-Konten, abgeglichen mit Turnaround-Score und Musterportfolio. "
+                "Orders sind nur im **eToro-Demokonto** möglich (unten) – Echtgeld-Konten werden nur gelesen.")
     a, b = st.columns([3, 1])
     et_acc = a.radio("eToro-Konto", ["real", "demo"], format_func={"real": "Echtgeld", "demo": "Demo"}.get,
                      horizontal=True, key="etoro_account")
@@ -647,6 +648,89 @@ with tabs[7]:
         if not missing.empty:
             st.dataframe(pct(missing, ["Gewicht"])[["Name", "Ticker", "Score", "Gewicht", "Phase"]], hide_index=True,
                          width="stretch", column_config={"Score": score_col(), "Gewicht": PCT("Zielgewicht")})
+
+    # ---- eToro-DEMOkonto ans Musterportfolio angleichen ----------------------
+    st.divider()
+    st.subheader("🔁 eToro-Demokonto ans Musterportfolio angleichen")
+    if st.session_state.pop("demo_sync_reset", False):  # nach Ausführung Schalter zurücksetzen
+        st.session_state["demo_sync"] = False
+        st.session_state["demo_confirm"] = False
+    demo_client = brokers.EToroClient.from_env("demo")
+    if demo_client is None:
+        st.info("eToro ist nicht konfiguriert (ETORO_API_KEY und ETORO_USER_KEY in .env).")
+    elif pf.empty:
+        st.info("Kein Musterportfolio vorhanden – Kriterien in der Seitenleiste anpassen.")
+    else:
+        st.caption("Gilt ausschließlich für das **Demokonto** (Spielgeld) – das Echtgeld-Konto ist für Orders gesperrt. "
+                   "Beim Einschalten wird ein Plan berechnet; ausgeführt wird erst nach deiner Bestätigung. "
+                   "Käufe erfolgen als Market-Order ohne Hebel; bei geschlossener Börse wartet die Order auf die "
+                   "Marktöffnung.")
+        if st.toggle("Demo-Depot angleichen", key="demo_sync"):
+            c1, c2, c3 = st.columns(3)
+            mode = c1.radio("Volumen", ["Gesamtes Demo-Kapital", "Fester Betrag"], key="demo_budget_mode")
+            amount = c2.number_input("Betrag (USD)", 100, 10_000_000, 10_000, 500, key="demo_amount",
+                                     disabled=mode != "Fester Betrag")
+            min_trade = c3.number_input("Mindest-Ordergröße (USD)", 10, 5_000, 50, 10, key="demo_min_trade",
+                                        help="Kleinere Abweichungen werden nicht gehandelt.")
+            close_others = st.checkbox("Positionen außerhalb des Musterportfolios schließen", value=True,
+                                       key="demo_close_others")
+            budget = float(amount) if mode == "Fester Betrag" else None
+            plan_key = (tuple(zip(pf["Ticker"], pf["Gewicht"].round(4))), budget, min_trade, close_others)
+            if st.button("🔄 Plan neu berechnen"):
+                st.session_state.pop("demo_plan_key", None)
+            if st.session_state.get("demo_plan_key") != plan_key:
+                with st.spinner("Lese Demokonto und berechne Orders …"):
+                    try:
+                        st.session_state["demo_plan"] = rebalance.build_plan(
+                            demo_client, pf, budget, float(min_trade), close_others=close_others)
+                        st.session_state["demo_plan_err"] = None
+                    except brokers.BrokerError as exc:
+                        st.session_state["demo_plan"], st.session_state["demo_plan_err"] = None, str(exc)
+                st.session_state["demo_plan_key"] = plan_key
+            plan = st.session_state.get("demo_plan")
+            if st.session_state.get("demo_plan_err"):
+                st.error("Plan konnte nicht berechnet werden: " + st.session_state["demo_plan_err"])
+            elif plan is not None:
+                m = st.columns(4)
+                m[0].metric("Demo-Kapital (USD)", de_num(plan.equity, 0))
+                m[1].metric("Cash (USD)", de_num(plan.cash, 0))
+                m[2].metric("Verkäufe (USD)", de_num(plan.verkaeufe, 0))
+                m[3].metric("Käufe (USD)", de_num(plan.kaeufe, 0))
+                for h in plan.hinweise:
+                    st.caption("ℹ️ " + h)
+                if not plan.uebersicht.empty:
+                    st.dataframe(pct(plan.uebersicht, ["Zielgewicht"]), hide_index=True, width="stretch",
+                                 column_config={"Zielgewicht": PCT("Zielgewicht"),
+                                                **{c: st.column_config.NumberColumn(c, format="%.0f")
+                                                   for c in ["Ist (USD)", "Ziel (USD)", "Nachher (USD)"]},
+                                                "Änderung (USD)": st.column_config.NumberColumn(format="%+.0f")})
+                if not plan.orders:
+                    st.success("Das Demo-Depot entspricht bereits dem Musterportfolio – keine Orders nötig.")
+                else:
+                    st.markdown(f"**Geplante Orders ({len(plan.orders)})** – erst Verkäufe, dann Käufe:")
+                    st.dataframe(plan.orders_frame(), hide_index=True, width="stretch",
+                                 column_config={"aktion": "Aktion", "symbol": "Symbol", "name": "Name",
+                                                "betrag": st.column_config.NumberColumn("Betrag (USD)", format="%.2f"),
+                                                "units": st.column_config.NumberColumn("Stück", format="%.4f"),
+                                                "position_id": st.column_config.NumberColumn("Position", format="%d"),
+                                                "grund": "Grund"})
+                    confirm = st.checkbox(f"Ich möchte diese {len(plan.orders)} Orders im eToro-**Demokonto** ausführen.",
+                                          key="demo_confirm")
+                    if st.button("✅ Orders im Demokonto ausführen", type="primary", disabled=not confirm):
+                        bar = st.progress(0.0, text="Sende Orders …")
+                        st.session_state["demo_results"] = rebalance.execute_plan(demo_client, plan,
+                                                                                  progress=progress_cb(bar))
+                        load_broker_data.clear()  # Depotanzeige mit neuen Positionen laden
+                        st.session_state.pop("demo_plan_key", None)
+                        st.session_state["demo_sync_reset"] = True
+                        st.rerun()
+        res = st.session_state.get("demo_results")
+        if res is not None and not res.empty:
+            ok = res["Status"].isin(["Ausgeführt", "Teilweise ausgeführt"]).sum()
+            st.markdown(f"**Letzte Ausführung:** {ok} von {len(res)} Orders ausgeführt.")
+            st.dataframe(res, hide_index=True, width="stretch",
+                         column_config={"Betrag (USD)": st.column_config.NumberColumn(format="%.2f")})
+            st.caption("Protokoll: portfolios/demo_sync_log.jsonl")
 
 # --------------------------------------------------------------------------- #
 # Methodik
