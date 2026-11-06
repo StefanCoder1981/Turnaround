@@ -414,49 +414,109 @@ with tabs[3]:
 # Musterportfolio
 # --------------------------------------------------------------------------- #
 with tabs[4]:
-    if pf.empty:
-        st.warning("Kein Titel erfüllt die Portfolio-Kriterien – Mindest-Score senken oder Universum erweitern.")
+    # Zeitraum: (Wochen, Monate) – genau einer von beiden ist gesetzt
+    periods = {"1 Woche": (1, None), "3 Monate": (None, 3), "6 Monate": (None, 6), "12 Monate": (None, 12)}
+    r1, r2 = st.columns(2)
+    period = r1.radio("Rückblick", list(periods), index=3, horizontal=True, key="pf_period")
+    pf_mode = r2.radio("Auswahl", ["Heutige Auswahl", "Auswahl zum Startdatum"], horizontal=True, key="pf_mode",
+                       help="**Heutige Auswahl:** das aktuelle Musterportfolio mit seiner Wertentwicklung im Zeitraum "
+                            "(Rückschaufehler!). **Auswahl zum Startdatum:** das Portfolio, das der Scanner zu Beginn "
+                            "des Zeitraums gewählt hätte – nur aus Kurssignalen, da Fundamental- und News-Daten "
+                            "nicht historisch vorliegen.")
+    weeks, months = periods[period]
+    start_day = portfolio.period_start(prices, months or 12, weeks)
+    last_px = prices.ffill().iloc[-1]
+    uni = pd.DataFrame({"Ticker": list(prices.columns), "Gewicht": 1 / prices.shape[1]})
+    uni_perf = portfolio.backward_performance(prices, uni, months or 12, weeks=weeks)
+    st.caption(f"Zeitraum: {start_day:%d.%m.%Y} – {prices.index.max():%d.%m.%Y}")
+
+    if pf_mode == "Heutige Auswahl":
+        view_pf = pf
+        if pf.empty:
+            st.warning("Kein Titel erfüllt die Portfolio-Kriterien – Mindest-Score senken oder Universum erweitern.")
+        else:
+            st.markdown(f"**{len(pf)} Positionen** aus {len(cands)} Kandidaten · max. {pf_sector} je Sektor · "
+                        f"max. {pf_maxw:.0%} je Titel · Gewichtung: {pf_weighting}")
+            alloc = portfolio.allocate(pf, pf_amount)
+            alloc["Rendite Zeitraum"] = portfolio.period_returns(prices, alloc["Ticker"], start_day).to_numpy()
+            alloc["Begründung"] = [reasoning(r, news_store.get(r["Ticker"])) for _, r in alloc.iterrows()]
+            av = pct(alloc, ["Gewicht", "Abstand Hoch", "Rendite Zeitraum"])
+            st.dataframe(av[["Name", "Ticker", "Sektor", "Phase", "Score", "Gewicht", "Betrag", "Kurs", "Währung",
+                             "Stück (ca.)", "Abstand Hoch", "Rendite Zeitraum", "Begründung"]],
+                         hide_index=True, width="stretch",
+                         column_config={"Score": score_col(), "Gewicht": PCT("Gewicht"),
+                                        "Betrag": st.column_config.NumberColumn(format="%.0f"),
+                                        "Kurs": st.column_config.NumberColumn(format="%.2f"),
+                                        "Abstand Hoch": PCT("vs. Hoch"),
+                                        "Rendite Zeitraum": PCT(f"Rendite {period}"),
+                                        "Begründung": st.column_config.TextColumn(width="large")})
+            if alloc["Währung"].nunique() > 1:
+                st.caption("Hinweis: Positionen notieren in verschiedenen Währungen; Stückzahlen sind auf die "
+                           "Handelswährung bezogen und ohne Wechselkursumrechnung nur grob.")
     else:
-        st.markdown(f"**{len(pf)} Positionen** aus {len(cands)} Kandidaten · max. {pf_sector} je Sektor · "
-                    f"max. {pf_maxw:.0%} je Titel · Gewichtung: {pf_weighting}")
-        alloc = portfolio.allocate(pf, pf_amount)
-        alloc["Begründung"] = [reasoning(r, news_store.get(r["Ticker"])) for _, r in alloc.iterrows()]
-        av = pct(alloc, ["Gewicht", "Abstand Hoch"])
-        st.dataframe(av[["Name", "Ticker", "Sektor", "Phase", "Score", "Gewicht", "Betrag", "Kurs", "Währung",
-                         "Stück (ca.)", "Abstand Hoch", "Begründung"]],
-                     hide_index=True, width="stretch",
-                     column_config={"Score": score_col(), "Gewicht": PCT("Gewicht"),
-                                    "Betrag": st.column_config.NumberColumn(format="%.0f"),
-                                    "Kurs": st.column_config.NumberColumn(format="%.2f"),
-                                    "Abstand Hoch": PCT("vs. Hoch"),
-                                    "Begründung": st.column_config.TextColumn(width="large")})
-        if alloc["Währung"].nunique() > 1:
-            st.caption("Hinweis: Positionen notieren in verschiedenen Währungen; Stückzahlen sind auf die "
-                       "Handelswährung bezogen und ohne Wechselkursumrechnung nur grob.")
+        pit_key = (key, start_day, lookback, cand_dd, min_cap,
+                   tuple(weights[f] for f in analysis.PRICE_FACTORS))
+        if st.session_state.get("pit_key") != pit_key:
+            with st.spinner(f"Bewerte Universum zum {start_day:%d.%m.%Y} …"):
+                st.session_state["pit"] = analysis.score_as_of(prices, params, start_day, static=scored)
+            st.session_state["pit_key"] = pit_key
+        pit = st.session_state["pit"]
+        view_pf = portfolio.build_portfolio(pit, n=pf_n, max_per_sector=pf_sector, max_weight=pf_maxw,
+                                            min_score=pf_minscore, weighting=pf_weighting)
+        if view_pf.empty:
+            st.warning(f"Zum {start_day:%d.%m.%Y} hätte kein Titel die Portfolio-Kriterien erfüllt "
+                       "(zu wenig Kurshistorie oder Mindest-Score zu hoch).")
+        else:
+            hv = view_pf.copy()
+            hv["Betrag"] = hv["Gewicht"] * pf_amount
+            hv["Kurs heute"] = last_px.reindex(hv["Ticker"]).to_numpy()
+            hv["Rendite Zeitraum"] = hv["Kurs heute"] / hv["Kurs"] - 1
+            hv["Wert heute"] = hv["Betrag"] * (1 + hv["Rendite Zeitraum"])
+            hv["Heute im Portfolio"] = hv["Ticker"].isin(set(pf["Ticker"]) if not pf.empty else set())
+            total = hv["Wert heute"].sum()
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Positionen", len(hv), help=f"aus {int(pit['Kandidat'].sum())} damaligen Kandidaten")
+            m2.metric(f"Rendite {period}", f"{total / pf_amount - 1:+.1%}")
+            m3.metric("Universum", f"{uni_perf.iloc[-1] - 1:+.1%}" if len(uni_perf) else "–")
+            hv = pct(hv, ["Gewicht", "Abstand Hoch", "Rendite Zeitraum"])
+            st.dataframe(hv[["Name", "Ticker", "Sektor", "Score", "Gewicht", "Betrag", "Kurs", "Kurs heute",
+                             "Währung", "Abstand Hoch", "Rendite Zeitraum", "Wert heute", "Heute im Portfolio",
+                             "Risiken"]],
+                         hide_index=True, width="stretch",
+                         column_config={"Score": score_col("Kurs-Score damals"), "Gewicht": PCT("Gewicht"),
+                                        "Betrag": st.column_config.NumberColumn(format="%.0f"),
+                                        "Kurs": st.column_config.NumberColumn("Kurs damals", format="%.2f"),
+                                        "Kurs heute": st.column_config.NumberColumn(format="%.2f"),
+                                        "Abstand Hoch": PCT("vs. Hoch damals"),
+                                        "Rendite Zeitraum": PCT(f"Rendite {period}"),
+                                        "Wert heute": st.column_config.NumberColumn(format="%.0f")})
+            st.caption("Auswahl nur aus Kurssignalen (Abschlag, Bodenbildung, Momentum) mit den Kursen bis zum "
+                       "Startdatum; Fundamental- und News-Daten liegen nicht historisch vor. Sektor und "
+                       "Marktkapitalisierung sind heutiger Stand. Survivorship-Bias: Das Universum besteht aus "
+                       "heute gelisteten Titeln. Renditen in Handelswährung, ohne Kosten.")
+
+    if not view_pf.empty:
         a, b = st.columns([3, 2])
-        a.plotly_chart(charts.weight_bars(pf), width="stretch")
-        b.plotly_chart(charts.sector_bars(pf), width="stretch")
-
-        # Zeitraum: (Wochen, Monate) – genau einer von beiden ist gesetzt
-        periods = {"1 Woche": (1, None), "3 Monate": (None, 3), "6 Monate": (None, 6), "12 Monate": (None, 12)}
-        period = st.radio("Rückblick", list(periods), index=3, horizontal=True)
-        weeks, months = periods[period]
-        pf_perf = portfolio.backward_performance(prices, pf, months or 12, weeks=weeks)
-        uni = pd.DataFrame({"Ticker": list(prices.columns), "Gewicht": 1 / prices.shape[1]})
-        uni_perf = portfolio.backward_performance(prices, uni, months or 12, weeks=weeks)
+        a.plotly_chart(charts.weight_bars(view_pf), width="stretch")
+        b.plotly_chart(charts.sector_bars(view_pf), width="stretch")
+        pf_perf = portfolio.backward_performance(prices, view_pf, months or 12, weeks=weeks)
+        label = "heutige Auswahl" if pf_mode == "Heutige Auswahl" else f"Auswahl vom {start_day:%d.%m.%Y}"
         st.plotly_chart(charts.performance_lines({"Musterportfolio": pf_perf, "Universum (gleichgewichtet)": uni_perf},
-                                                 f"Rückblick: heutige Auswahl über {period}"),
+                                                 f"Rückblick: {label} über {period}"),
                         width="stretch")
-        st.caption("⚠️ Rückblick mit heutiger Auswahl = Rückschaufehler, kein Backtest. "
-                   "Eine ehrliche Prüfung der Kurssignale liefert der Tab „Signal-Check“.")
+        if pf_mode == "Heutige Auswahl":
+            st.caption("⚠️ Rückblick mit heutiger Auswahl = Rückschaufehler, kein Backtest. Ehrlicher: „Auswahl "
+                       "zum Startdatum“ oder der Tab „Signal-Check“.")
 
+    if not pf.empty:
         st.divider()
         s1, s2 = st.columns([3, 1])
         snap_label = s1.text_input("Bezeichnung für Snapshot", placeholder="z. B. Start Q4/2026")
         if s2.button("💾 Portfolio speichern", width="stretch"):
             p = portfolio.save_snapshot(pf, snap_label)
             st.success(f"Gespeichert: {p.name}")
-        st.download_button("⬇️ Portfolio als CSV", alloc.drop(columns=[c for c in alloc if c.startswith("S_")])
+        alloc_csv = alloc if pf_mode == "Heutige Auswahl" else portfolio.allocate(pf, pf_amount)
+        st.download_button("⬇️ Portfolio als CSV", alloc_csv.drop(columns=[c for c in alloc_csv if c.startswith("S_")])
                            .to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                            "musterportfolio.csv", "text/csv")
 

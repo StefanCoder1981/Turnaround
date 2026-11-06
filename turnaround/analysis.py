@@ -360,6 +360,45 @@ def price_only_score(close: pd.Series, weights: dict) -> tuple[float, float] | N
     return sc, ps["Abstand Hoch"]
 
 
+def score_as_of(prices: pd.DataFrame, params: Params, asof: pd.Timestamp,
+                static: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Kurs-Scoring so, wie es am Stichtag ``asof`` möglich gewesen wäre (nur Kurse bis dahin).
+
+    Fundamental- und News-Daten sind nicht historisch verfügbar und fließen nicht ein. ``static`` liefert
+    Stammdaten (Name, Sektor, Währung, Marktkap. – heutiger Stand) je Ticker. Ergebnis im Format von
+    ``analyze_universe`` (Spalten Ticker, Score, Kandidat, Risiken, Vola 1J, Kurs, Abstand Hoch …),
+    damit ``portfolio.build_portfolio`` es direkt verarbeiten kann.
+    """
+    idx = prices.index
+    hist = prices.loc[(idx <= asof) & (idx > asof - pd.DateOffset(years=params.lookback_years))]
+    rows = []
+    for t in prices.columns:
+        c = hist[t].dropna()
+        ps = price_signals(c)
+        if ps is None:
+            continue
+        sub = {"Abschlag": score_discount(ps), "Bodenbildung": score_stabilization(ps),
+               "Momentum": score_momentum(ps)}
+        knife = bool(ps["Kurs"] < 0.8 * ps["SMA200"] and ps["SMA200 Steigung"] < 0 and ps["Rendite 3M"] < -0.10)
+        w = {k: params.weights.get(k, 1.0) for k in PRICE_FACTORS}
+        sc = combine(sub, w) * (FLAG_PENALTY["Fallendes Messer"] if knife else 1.0)
+        rows.append({"Ticker": t, "Stichtag": c.index[-1], "Score": sc, "Kurs": ps["Kurs"],
+                     "Abstand Hoch": ps["Abstand Hoch"], "Vola 1J": ps["Vola 1J"],
+                     "Risiken": "Fallendes Messer" if knife else ""})
+    df = pd.DataFrame(rows, columns=["Ticker", "Stichtag", "Score", "Kurs", "Abstand Hoch", "Vola 1J", "Risiken"])
+    st_cols = ["Name", "Sektor", "Währung", "Marktkap."]
+    if static is not None and not df.empty:
+        df = df.merge(static[["Ticker"] + [c for c in st_cols if c in static]], on="Ticker", how="left")
+    for col, default in (("Name", None), ("Sektor", "Unbekannt"), ("Währung", ""), ("Marktkap.", np.nan)):
+        if col not in df:
+            df[col] = default
+    df["Name"] = df["Name"].fillna(df["Ticker"])
+    df["Sektor"] = df["Sektor"].fillna("Unbekannt")
+    df["Kandidat"] = (df["Abstand Hoch"] <= -params.cand_min_drawdown) & (
+        df["Marktkap."].fillna(np.inf) >= params.min_market_cap)
+    return df.sort_values("Score", ascending=False).reset_index(drop=True)
+
+
 def signal_backtest(prices: pd.DataFrame, params: Params, horizon_months: int = 12,
                     top_n: int = 10, step_months: int = 3) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Wendet die Kurs-Signale an vergangenen Stichtagen an und misst die Folgerendite.

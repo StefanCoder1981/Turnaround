@@ -35,8 +35,10 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
   Muster ≤ 6 Zeichen nur am Wortanfang. Kategorie `Existenz` = Red Flag. Cache 6 h.
 - `turnaround/analysis.py` – `detect_turnaround` (vektorisiert: Einbruch ggü. laufendem Max, Erholung
   ggü. künftigem Max), `price_signals`, sechs Teil-Scores 0–1 (`FACTOR_HELP`), `risk_flags` mit
-  multiplikativen Abschlägen (`FLAG_PENALTY`), `analyze_universe`, `signal_backtest` (nur Kurssignale).
-- `turnaround/portfolio.py` – Auswahl mit Sektor-Limit, Gewichtung + `cap_weights`, Snapshots als JSON
+  multiplikativen Abschlägen (`FLAG_PENALTY`), `analyze_universe`, `signal_backtest` und `score_as_of` (nur Kurssignale, Stichtag-genau –
+  Grundlage für „Auswahl zum Startdatum“ im Musterportfolio-Rückblick).
+- `turnaround/portfolio.py` – Auswahl mit Sektor-Limit, Gewichtung + `cap_weights`, Rückblick-Zeitraum
+  (`period_start`, `period_returns`, `backward_performance`), Snapshots als JSON
   in `portfolios/`.
 - `turnaround/charts.py` – Plotly. Feste Farbrollen S1/S2/S3/RING je Modus in `PALETTES`
   (`set_mode("light"|"dark")` vor dem Zeichnen), MUTED; Statusfarben (GOOD/CRITICAL) nur für

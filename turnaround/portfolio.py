@@ -73,12 +73,26 @@ def allocate(pf: pd.DataFrame, amount: float) -> pd.DataFrame:
     return out
 
 
+def period_start(prices: pd.DataFrame, months: int = 12, weeks: int | None = None) -> pd.Timestamp:
+    """Letzter Handelstag am oder vor dem Beginn des Rückblicks (heute − Zeitraum)."""
+    offset = pd.DateOffset(weeks=weeks) if weeks else pd.DateOffset(months=months)
+    target = prices.index.max() - offset
+    before = prices.index[prices.index <= target]
+    return before.max() if len(before) else prices.index.min()
+
+
+def period_returns(prices: pd.DataFrame, tickers, start: pd.Timestamp) -> pd.Series:
+    """Rendite je Ticker vom Starttag (letzter Kurs bis dahin) bis zum letzten Kurs; NaN ohne Startkurs."""
+    px = prices[list(tickers)]
+    first = px.loc[px.index <= start].ffill().iloc[-1] if (px.index <= start).any() else px.iloc[0] * np.nan
+    return px.ffill().iloc[-1] / first - 1
+
+
 def backward_performance(prices: pd.DataFrame, pf: pd.DataFrame, months: int = 12,
                          weeks: int | None = None) -> pd.Series:
-    """Rückblick: Wertentwicklung der heutigen Auswahl (kein echter Backtest).
+    """Rückblick: Wertentwicklung der Auswahl ``pf`` ab Beginn des Zeitraums (Start = 1,0).
     Mit ``weeks`` wird statt ``months`` ein Zeitraum in Wochen betrachtet."""
-    offset = pd.DateOffset(weeks=weeks) if weeks else pd.DateOffset(months=months)
-    start = prices.index.max() - offset
+    start = period_start(prices, months, weeks)
     px = prices.loc[prices.index >= start, pf["Ticker"]].ffill().dropna(how="all")
     px = px.bfill()
     norm = px / px.iloc[0]
