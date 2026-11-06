@@ -73,9 +73,12 @@ def allocate(pf: pd.DataFrame, amount: float) -> pd.DataFrame:
     return out
 
 
-def backward_performance(prices: pd.DataFrame, pf: pd.DataFrame, months: int = 12) -> pd.Series:
-    """Rückblick: Wertentwicklung der heutigen Auswahl (kein echter Backtest)."""
-    start = prices.index.max() - pd.DateOffset(months=months)
+def backward_performance(prices: pd.DataFrame, pf: pd.DataFrame, months: int = 12,
+                         weeks: int | None = None) -> pd.Series:
+    """Rückblick: Wertentwicklung der heutigen Auswahl (kein echter Backtest).
+    Mit ``weeks`` wird statt ``months`` ein Zeitraum in Wochen betrachtet."""
+    offset = pd.DateOffset(weeks=weeks) if weeks else pd.DateOffset(months=months)
+    start = prices.index.max() - offset
     px = prices.loc[prices.index >= start, pf["Ticker"]].ffill().dropna(how="all")
     px = px.bfill()
     norm = px / px.iloc[0]

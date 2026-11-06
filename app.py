@@ -437,12 +437,15 @@ with tabs[4]:
         a.plotly_chart(charts.weight_bars(pf), width="stretch")
         b.plotly_chart(charts.sector_bars(pf), width="stretch")
 
-        months = st.radio("Rückblick", [3, 6, 12], index=2, horizontal=True, format_func=lambda m: f"{m} Monate")
-        pf_perf = portfolio.backward_performance(prices, pf, months)
+        # Zeitraum: (Wochen, Monate) – genau einer von beiden ist gesetzt
+        periods = {"1 Woche": (1, None), "3 Monate": (None, 3), "6 Monate": (None, 6), "12 Monate": (None, 12)}
+        period = st.radio("Rückblick", list(periods), index=3, horizontal=True)
+        weeks, months = periods[period]
+        pf_perf = portfolio.backward_performance(prices, pf, months or 12, weeks=weeks)
         uni = pd.DataFrame({"Ticker": list(prices.columns), "Gewicht": 1 / prices.shape[1]})
-        uni_perf = portfolio.backward_performance(prices, uni, months)
+        uni_perf = portfolio.backward_performance(prices, uni, months or 12, weeks=weeks)
         st.plotly_chart(charts.performance_lines({"Musterportfolio": pf_perf, "Universum (gleichgewichtet)": uni_perf},
-                                                 f"Rückblick: heutige Auswahl über {months} Monate"),
+                                                 f"Rückblick: heutige Auswahl über {period}"),
                         width="stretch")
         st.caption("⚠️ Rückblick mit heutiger Auswahl = Rückschaufehler, kein Backtest. "
                    "Eine ehrliche Prüfung der Kurssignale liefert der Tab „Signal-Check“.")
