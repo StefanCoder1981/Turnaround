@@ -41,15 +41,37 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
 - `turnaround/charts.py` – Plotly. Feste Farbrollen S1/S2/S3/RING je Modus in `PALETTES`
   (`set_mode("light"|"dark")` vor dem Zeichnen), MUTED; Statusfarben (GOOD/CRITICAL) nur für
   positiv/negativ. Keine Doppelachsen, Farben nie zyklisch. Marker-Ringe in `RING` (= Hintergrund), nie „white“.
+- `turnaround/universe.py` – Tickerlisten (Yahoo-Format); ungültige Ticker werden still übersprungen.
+- `turnaround/brokers/` – Broker-Clients, **nur lesend** (siehe unten).
+
+## Broker-Anbindung (Bitpanda, eToro)
+
+- Schlüssel stehen in `.env` (Vorlage: `.env.example`): `FUSION_API_KEY`, optional `BITPANDA_API_KEY`,
+  `ETORO_API_KEY`, `ETORO_USER_KEY`. **Werte nie ausgeben, loggen oder committen**; zum Prüfen nur die
+  Namen lesen (`sed -E 's/=.*//' .env`). `BrokerError`-Meldungen enthalten bewusst keine Header.
+- `base.py`: `HttpClient` (Timeout, 429 → `Retry-After`), Datenklassen `Holding`/`AccountSummary`.
+- `bitpanda.py`: `FusionClient` (`https://api.fusion.bitpanda.com`, Header `x-api-key`; `/v1/account`,
+  `/v1/account/balances`, `/v1/tickers`, `/v1/account/trades|orders`). Die Struktur der Balances-Einträge ist
+  nicht dokumentiert → defensiv geparst. `BitpandaClassicClient` (`https://api.public.bitpanda.com`,
+  `/v1/portfolio`, `/v1/assets`) braucht einen eigenen Schlüssel – der Fusion-Schlüssel liefert dort 401.
+- `etoro.py`: `EToroClient` (`https://public-api.etoro.com`, Header `x-api-key`, `x-user-key`, je Anfrage
+  neue `x-request-id`). Positionen + GuV aus `/api/v1/trading/info/{real|demo}/pnl`, Namen über
+  `/api/v2/market-data/instruments?instrumentsIds=` (sic), Kurse über `/api/v2/market-data/rates?instrumentIds=`.
+  Limits: 60 Portfolio- bzw. 120 Marktdaten-Abfragen/Min. eToro-Symbole ≈ Yahoo-Ticker (Krypto → `-USD`).
+- Die UI (Tab „Depots“) cacht `brokers.fetch_all` 5 Minuten. **Keine Order-Endpunkte einbauen**, ohne dass
+  der Nutzer das ausdrücklich verlangt; dann zuerst gegen das eToro-Demokonto.
+- Tests in `tests/test_brokers.py` laufen ohne Netz (simulierte Antworten über `monkeypatch` auf `get`).
 
 ## Darkmode
 
 Farbschemata in `.streamlit/config.toml` (`[theme.light]`, `[theme.dark]`). Streamlit hat keine API zum
 Umschalten zur Laufzeit: Der Sidebar-Umschalter schreibt per `st.html(..., unsafe_allow_javascript=True)`
 den Frontend-Schlüssel `stActiveTheme-<pfad>-v2` (`"Light"|"Dark"|"System"`) in den localStorage und lädt
-die Seite mit `?theme=…` neu. Der URL-Parameter hält die Wahl über das Neuladen und steuert `charts.set_mode`.
+die Seite mit `?theme=…` neu. Der URL-Parameter hält die Wahl über das Neuladen und steuert `charts.set_mode`;
+ein zweites Skript gleicht beim Laden URL und localStorage ab (Lesezeichen, neuer Browser).
+Fallstricke: Skripte in eigenen, benannten Containern rendern (sonst werden sie nicht erneut ausgeführt) und
+in `(() => {…})()` kapseln (doppelte globale `const` bricht das zweite Skript ab).
 Bei einem Streamlit-Update prüfen, ob der Schlüssel noch stimmt (`grep stActiveTheme .venv/Lib/site-packages/streamlit/static`).
-- `turnaround/universe.py` – Tickerlisten (Yahoo-Format); ungültige Ticker werden still übersprungen.
 
 ## Konventionen
 

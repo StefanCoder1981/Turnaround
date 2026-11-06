@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from turnaround import analysis, charts, data, news, portfolio
+from turnaround import analysis, brokers, charts, data, news, portfolio
 from turnaround.universe import DEFAULT_UNIVERSES, UNIVERSES, build_universe
 
 st.set_page_config(page_title="Turnaround-Scanner", page_icon="🔄", layout="wide")
@@ -121,15 +121,28 @@ def _on_theme_change() -> None:
 
 pending = st.session_state.pop("theme_pending", None)
 if pending and pending != theme_pref:
-    st.html(f"""<script>
+    # Eigene, benannte Container: Streamlit führt ein Skript nur beim Einhängen eines neuen Elements aus.
+    st.container(key="theme_switch").html(f"""<script>(() => {{
         const key = `stActiveTheme-${{window.location.pathname}}-v2`;
         window.localStorage.setItem(key, JSON.stringify("{_ST_THEME_NAME[pending]}"));
         const url = new URL(window.location.href);
         url.searchParams.set("theme", "{pending}");
         window.location.replace(url.toString());
-    </script>""", unsafe_allow_javascript=True)
+    }})();</script>""", unsafe_allow_javascript=True)
     st.info("Darstellung wird umgeschaltet …")
     st.stop()
+
+if theme_pref != "system":
+    # URL (?theme=dark, z. B. aus einem Lesezeichen) und Browser-Speicher abgleichen.
+    # Lädt nur neu, wenn sie abweichen – danach stimmen sie überein, also keine Schleife.
+    st.container(key="theme_sync").html(f"""<script>(() => {{
+        const key = `stActiveTheme-${{window.location.pathname}}-v2`;
+        const want = JSON.stringify("{_ST_THEME_NAME[theme_pref]}");
+        if (window.localStorage.getItem(key) !== want) {{
+            window.localStorage.setItem(key, want);
+            window.location.reload();
+        }}
+    }})();</script>""", unsafe_allow_javascript=True)
 
 ctx_theme = getattr(st.context.theme, "type", None) if hasattr(st.context, "theme") else None
 charts.set_mode(theme_pref if theme_pref != "system" else (ctx_theme or "light"))
@@ -245,7 +258,7 @@ c4.metric("Aktuelle Kandidaten", len(cands), help=f"Mind. {cand_dd:.0%} unter de
 c5.metric("Ø Score Portfolio", f"{pf['Score'].mean():.0f}" if not pf.empty else "–")
 
 tabs = st.tabs(["📊 Übersicht", "🔄 Historische Turnarounds", "🎯 Kandidaten", "📰 News-Abgleich",
-                "💼 Musterportfolio", "🔍 Einzelanalyse", "🧪 Signal-Check", "ℹ️ Methodik"])
+                "💼 Musterportfolio", "🔍 Einzelanalyse", "🧪 Signal-Check", "🏦 Depots", "ℹ️ Methodik"])
 
 # --------------------------------------------------------------------------- #
 # Übersicht
@@ -561,9 +574,84 @@ with tabs[6]:
                "berücksichtigt. Ergebnisse der Vergangenheit sind keine Garantie für die Zukunft.")
 
 # --------------------------------------------------------------------------- #
+# Depots (Bitpanda, eToro)
+# --------------------------------------------------------------------------- #
+@st.cache_data(ttl=300, show_spinner="Frage Broker-Konten ab …")
+def load_broker_data(etoro_account: str):
+    return brokers.fetch_all(etoro_account)
+
+
+with tabs[7]:
+    st.markdown("Bestände aus den angebundenen Broker-Konten – **nur lesend**, es werden keine Orders ausgeführt. "
+                "Die Positionen werden mit dem Turnaround-Score und dem Musterportfolio abgeglichen.")
+    a, b = st.columns([3, 1])
+    et_acc = a.radio("eToro-Konto", ["real", "demo"], format_func={"real": "Echtgeld", "demo": "Demo"}.get,
+                     horizontal=True, key="etoro_account")
+    if b.button("🔄 Depots aktualisieren", width="stretch"):
+        load_broker_data.clear()
+    statuses, hold = load_broker_data(et_acc)
+
+    icons = {"verbunden": "🟢", "nicht konfiguriert": "⚪", "Fehler": "🔴"}
+    for col, s in zip(st.columns(len(statuses)), statuses):
+        with col.container(border=True):
+            st.markdown(f"**{icons[s.status]} {s.name} · {s.konto}**  \n{s.status}")
+            if s.summary:
+                cur = s.summary.waehrung
+                m1, m2 = st.columns(2)
+                m1.metric("Positionen", s.summary.positionen)
+                m2.metric(f"Cash ({cur})", fmt_big(s.summary.cash) if s.summary.cash is not None else "–")
+                if s.summary.guv is not None:
+                    st.metric(f"Unrealisierte GuV ({cur})", de_num(s.summary.guv))
+            if s.meldung:
+                st.caption(s.meldung)
+
+    if hold.empty:
+        st.info("Keine offenen Positionen in den verbundenen Konten.")
+    else:
+        sc = scored.set_index("Ticker")
+        pf_set = set(pf["Ticker"]) if not pf.empty else set()
+        hold["Im Scanner"] = hold["yahoo"].isin(sc.index)
+        hold["Score"] = hold["yahoo"].map(sc["Score"])
+        hold["Phase"] = hold["yahoo"].map(sc["Phase"])
+        hold["Risiken"] = hold["yahoo"].map(sc["Risiken"]).fillna("")
+        hold["Im Musterportfolio"] = hold["yahoo"].isin(pf_set)
+        st.subheader("Positionen")
+        st.dataframe(hold[["broker", "konto", "name", "symbol", "anlageklasse", "richtung", "menge", "einstandskurs",
+                           "kurs", "investiert", "guv", "waehrung", "hebel", "Score", "Phase", "Risiken",
+                           "Im Musterportfolio"]],
+                     hide_index=True, width="stretch",
+                     column_config={"broker": "Broker", "konto": "Konto", "name": "Name", "symbol": "Symbol",
+                                    "anlageklasse": "Klasse", "richtung": "Richtung",
+                                    "menge": st.column_config.NumberColumn("Menge", format="%.4f"),
+                                    "einstandskurs": st.column_config.NumberColumn("Einstand", format="%.2f"),
+                                    "kurs": st.column_config.NumberColumn("Kurs", format="%.2f"),
+                                    "investiert": st.column_config.NumberColumn("Investiert", format="%.2f"),
+                                    "guv": st.column_config.NumberColumn("GuV", format="%+.2f"),
+                                    "waehrung": "Whg.", "hebel": st.column_config.NumberColumn("Hebel", format="%.0fx"),
+                                    "Score": score_col(), "Im Musterportfolio": "Im Musterportfolio"})
+        weak = hold[hold["Im Scanner"] & ((hold["Score"] < 40) | (hold["Risiken"] != ""))]
+        if not weak.empty:
+            st.warning("**Prüfen:** Gehaltene Titel mit schwachem Turnaround-Score (< 40) oder Risiko-Flags: "
+                       + ", ".join(f"{r['name']} ({r['Score']:.0f}{', ' + r['Risiken'] if r['Risiken'] else ''})"
+                                   for _, r in weak.iterrows()))
+        outside = hold[~hold["Im Scanner"] & hold["anlageklasse"].isin(["Aktie", "ETF"])]
+        if not outside.empty:
+            st.caption("Nicht im gewählten Universum (Ticker ggf. über „Eigene Ticker“ ergänzen): "
+                       + ", ".join(outside["yahoo"].dropna().unique()))
+
+    if not pf.empty:
+        held = set(hold["yahoo"].dropna()) if not hold.empty else set()
+        missing = pf[~pf["Ticker"].isin(held)]
+        st.subheader("Musterportfolio vs. Depot")
+        st.markdown(f"{len(pf) - len(missing)} von {len(pf)} Musterportfolio-Titeln sind bereits im Depot.")
+        if not missing.empty:
+            st.dataframe(pct(missing, ["Gewicht"])[["Name", "Ticker", "Score", "Gewicht", "Phase"]], hide_index=True,
+                         width="stretch", column_config={"Score": score_col(), "Gewicht": PCT("Zielgewicht")})
+
+# --------------------------------------------------------------------------- #
 # Methodik
 # --------------------------------------------------------------------------- #
-with tabs[7]:
+with tabs[8]:
     st.markdown(f"""
 ### Historische Turnarounds
 Für jeden Handelstag wird der **Einbruch** (Kurs ggü. dem bisherigen Hoch) und die **Erholung** (bestes späteres
