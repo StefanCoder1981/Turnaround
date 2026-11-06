@@ -46,7 +46,7 @@ führt die App ausschließlich im eToro-Demokonto aus:
 | `FUSION_API_KEY` | Bitpanda Fusion (Krypto-Bestände, Kurse) |
 | `BITPANDA_API_KEY` | optional: klassische Bitpanda-API (Hauptkonto inkl. Aktien/ETFs) |
 | `ETORO_API_KEY`, `ETORO_USER_KEY` | eToro, Echtgeld- oder Demokonto (Lesen) |
-| `ETORO_DEMO_API_KEY`, `ETORO_DEMO_USER_KEY` | optional: eToro-Demo-Schlüssel mit „Write“ für das Angleichen |
+| `ETORO_API_WRITE` | optional: eToro-User-Key (Demo, „Write“) für Orders beim Angleichen des Demokontos |
 
 ## Aufbau
 

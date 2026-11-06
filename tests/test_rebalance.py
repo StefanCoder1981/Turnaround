@@ -145,3 +145,16 @@ def test_demo_write_keys_take_precedence(monkeypatch):
         "ETORO_DEMO_API_KEY": "write", "ETORO_DEMO_USER_KEY": "writeu"}.get(n))
     assert EToroClient.from_env("demo")._api_key == "write"
     assert EToroClient.from_env("real")._api_key == "read"
+
+
+def test_write_user_key_only_for_orders(monkeypatch):
+    monkeypatch.setattr("turnaround.brokers.etoro.env", lambda n: {
+        "ETORO_API_KEY": "api", "ETORO_USER_KEY": "readu", "ETORO_API_WRITE": "writeu"}.get(n))
+    assert EToroClient.from_env("real")._write_user_key is None
+    c = EToroClient.from_env("demo")
+    seen = []
+    monkeypatch.setattr(c, "_request", lambda *a, **k: seen.append(c._headers()["x-user-key"]) or {})
+    c.get("/x")
+    c.open_demo_order(1, 50)
+    c.get("/y")
+    assert seen == ["readu", "writeu", "readu"]

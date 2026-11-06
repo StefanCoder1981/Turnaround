@@ -47,7 +47,7 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
 ## Broker-Anbindung (Bitpanda, eToro)
 
 - Schlüssel stehen in `.env` (Vorlage: `.env.example`): `FUSION_API_KEY`, optional `BITPANDA_API_KEY`,
-  `ETORO_API_KEY`, `ETORO_USER_KEY`, optional `ETORO_DEMO_API_KEY`, `ETORO_DEMO_USER_KEY`. **Werte nie ausgeben, loggen oder committen**; zum Prüfen nur die
+  `ETORO_API_KEY`, `ETORO_USER_KEY`, optional `ETORO_API_WRITE`. **Werte nie ausgeben, loggen oder committen**; zum Prüfen nur die
   Namen lesen (`sed -E 's/=.*//' .env`). `BrokerError`-Meldungen enthalten bewusst keine Header.
 - `base.py`: `HttpClient` (Timeout, 429 → `Retry-After`), Datenklassen `Holding`/`AccountSummary`.
 - `bitpanda.py`: `FusionClient` (`https://api.fusion.bitpanda.com`, Header `x-api-key`; `/v1/account`,
@@ -66,8 +66,10 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
   `InstrumentID`, `UnitsToDeduct` null = ganz). Asynchron → Status über `demo/orders:lookup?orderId=` bzw.
   `demo/close-orders/{orderId}`; Status 11 = wartet auf Marktöffnung. Max. 20 Order-Anfragen/Min. (`pause`).
 - Schreibrecht: eToro-Schlüssel gelten je Umgebung (Real/Demo) und Berechtigung (Read/Write). Optional
-  `ETORO_DEMO_API_KEY`/`ETORO_DEMO_USER_KEY` (Write) haben fürs Demokonto Vorrang; 403 → `WRITE_PERMISSION_HINT`,
-  `execute_plan` bricht dann ab. Stand 06.11.2026: vorhandener Schlüssel ist nur lesend (Test-Order → 403).
+  `ETORO_API_WRITE` ist ein **User-Key** (Demo, Write) und wird nur für Order-POSTs als `x-user-key` gesendet
+  (`_post_order`); er darf **keine Marktdaten** lesen (403), daher bleibt `ETORO_USER_KEY` für alle GETs.
+  (Alternativ weiter möglich: `ETORO_DEMO_API_KEY`/`ETORO_DEMO_USER_KEY`.) 403 → `WRITE_PERMISSION_HINT`,
+  `execute_plan` bricht dann ab. Stand 06.11.2026: Test-Order 50 USD BTC im Demokonto gekauft und geschlossen – OK.
 - `rebalance.py`: `plan_rebalance` (rein, testbar) → `build_plan` (liest Demokonto) → `execute_plan`
   (erst Verkäufe, Guthaben neu lesen, dann Käufe). Protokoll in `portfolios/demo_sync_log.jsonl`.
   UI: Schalter `demo_sync` → Vorschau → Bestätigungs-Checkbox → Ausführen → Depot-Cache leeren, Schalter zurück.

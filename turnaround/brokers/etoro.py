@@ -14,7 +14,7 @@ from .base import AccountSummary, BrokerError, Holding, HttpClient, env, to_floa
 WRITE_PERMISSION_HINT = (
     "eToro lehnt die Order ab (HTTP 403): Der Schlüssel hat keine Schreibrechte für das Demokonto. "
     "In eToro unter Einstellungen → Trading → API Key Management einen Schlüssel mit Umgebung „Demo“ und "
-    "Berechtigung „Write“ anlegen und als ETORO_DEMO_API_KEY / ETORO_DEMO_USER_KEY in .env eintragen.")
+    "Berechtigung „Write“ anlegen und den User-Key als ETORO_API_WRITE in .env eintragen.")
 
 TYPE_LABEL = {"Stocks": "Aktie", "ETF": "ETF", "Crypto": "Krypto", "Commodity": "Rohstoff", "Indices": "Index",
               "Forex": "Devisen", "Bonds": "Anleihe", "CFD": "CFD"}
@@ -23,28 +23,36 @@ TYPE_LABEL = {"Stocks": "Aktie", "ETF": "ETF", "Crypto": "Krypto", "Commodity": 
 class EToroClient(HttpClient):
     BROKER = "eToro"
 
-    def __init__(self, api_key: str, user_key: str, account: str = "real", **kw):
+    def __init__(self, api_key: str, user_key: str, account: str = "real", write_user_key: str | None = None, **kw):
         if account not in ("real", "demo"):
             raise ValueError("account muss 'real' oder 'demo' sein")
         super().__init__("https://public-api.etoro.com", **kw)
         self._api_key, self._user_key = api_key, user_key
+        # User-Key mit Schreibrecht (Demo) – nur für Order-POSTs; er darf keine Marktdaten abrufen.
+        self._write_user_key = write_user_key
+        self._writing = False
         self.account = account
 
     @classmethod
     def from_env(cls, account: str = "real") -> "EToroClient | None":
-        """Für das Demokonto haben ETORO_DEMO_API_KEY/ETORO_DEMO_USER_KEY Vorrang (Schlüssel mit Schreibrecht);
-        sonst werden ETORO_API_KEY/ETORO_USER_KEY verwendet."""
+        """Lesen immer mit ETORO_API_KEY/ETORO_USER_KEY. Im Demokonto werden Orders mit dem User-Key
+        ETORO_API_WRITE (Umgebung Demo, Berechtigung Write) gesendet, falls vorhanden.
+        Alternativ: ETORO_DEMO_API_KEY/ETORO_DEMO_USER_KEY als vollständiges Demo-Schlüsselpaar."""
         k, u = env("ETORO_API_KEY"), env("ETORO_USER_KEY")
-        if account == "demo" and env("ETORO_DEMO_API_KEY") and env("ETORO_DEMO_USER_KEY"):
-            k, u = env("ETORO_DEMO_API_KEY"), env("ETORO_DEMO_USER_KEY")
-        return cls(k, u, account) if k and u else None
+        w = None
+        if account == "demo":
+            if env("ETORO_DEMO_API_KEY") and env("ETORO_DEMO_USER_KEY"):
+                k, u = env("ETORO_DEMO_API_KEY"), env("ETORO_DEMO_USER_KEY")
+            w = env("ETORO_API_WRITE")
+        return cls(k, u, account, write_user_key=w) if k and u else None
 
     @property
     def konto(self) -> str:
         return "Echtgeld" if self.account == "real" else "Demo"
 
     def _headers(self):
-        return {"x-api-key": self._api_key, "x-user-key": self._user_key,
+        user = self._write_user_key if self._writing and self._write_user_key else self._user_key
+        return {"x-api-key": self._api_key, "x-user-key": user,
                 "x-request-id": str(uuid.uuid4()), "Accept": "application/json"}
 
     # --- Rohendpunkte -------------------------------------------------------
@@ -104,12 +112,15 @@ class EToroClient(HttpClient):
             raise BrokerError("Orders sind nur im eToro-Demokonto freigeschaltet.")
 
     def _post_order(self, path: str, body: dict) -> dict:
+        self._writing = True
         try:
             return self.post(path, body) or {}
         except BrokerError as exc:
             if "HTTP 403" in str(exc):
                 raise BrokerError(WRITE_PERMISSION_HINT) from None
             raise
+        finally:
+            self._writing = False
 
     def open_demo_order(self, instrument_id: int, amount_usd: float) -> dict:
         """Market-Kauf (Long, ohne Hebel) über einen USD-Betrag. 200 = angenommen, nicht ausgeführt."""
