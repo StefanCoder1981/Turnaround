@@ -5,13 +5,27 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-# Kategoriale Slots in fester Reihenfolge + Statusfarben (reserviert)
-S1, S2, S3 = "#2a78d6", "#eb6834", "#1baf7a"
+# Kategoriale Slots in fester Reihenfolge + Statusfarben (reserviert).
+# Je Modus eigene, für den jeweiligen Hintergrund geprüfte Farbstufen.
+PALETTES = {
+    "light": {"S1": "#2a78d6", "S2": "#eb6834", "S3": "#1baf7a", "RING": "#fcfcfb"},
+    "dark": {"S1": "#3987e5", "S2": "#d95926", "S3": "#199e70", "RING": "#1a1a19"},
+}
+S1, S2, S3, RING = (PALETTES["light"][k] for k in ("S1", "S2", "S3", "RING"))
 MUTED = "#898781"
 GOOD, WARNING, CRITICAL = "#0ca30c", "#fab219", "#d03b3b"
+MODE = "light"
+
+
+def set_mode(mode: str) -> None:
+    """Schaltet die Chartfarben auf 'light' oder 'dark' um."""
+    global S1, S2, S3, RING, MODE
+    MODE = mode if mode in PALETTES else "light"
+    p = PALETTES[MODE]
+    S1, S2, S3, RING = p["S1"], p["S2"], p["S3"], p["RING"]
 
 BASE_LAYOUT = dict(
-    margin=dict(l=10, r=10, t=40, b=10),
+    margin=dict(l=10, r=30, t=80, b=10),
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     font=dict(family='system-ui, -apple-system, "Segoe UI", sans-serif'),
@@ -19,7 +33,9 @@ BASE_LAYOUT = dict(
 
 
 def _layout(fig: go.Figure, title: str = "", height: int = 380, **kw) -> go.Figure:
-    fig.update_layout(title=dict(text=title, x=0, font=dict(size=15)), height=height, **{**BASE_LAYOUT, **kw})
+    fig.update_layout(title=dict(text=title, x=0, y=0.98, yref="container", yanchor="top", font=dict(size=15)),
+                      height=height, **{**BASE_LAYOUT, **kw})
+    fig.update_traces(cliponaxis=False, selector=dict(type="bar"))
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridwidth=1, zeroline=False)
     return fig
@@ -45,7 +61,7 @@ def price_chart(close: pd.Series, title: str, episode: dict | None = None, curre
             fig.add_trace(go.Scatter(
                 x=[p[0] for p in pts], y=[p[1] for p in pts], mode="markers+text", name="Wendepunkte",
                 text=[p[2] for p in pts], textposition="top center",
-                marker=dict(size=11, color=S1, line=dict(width=2, color="white")),
+                marker=dict(size=11, color=S1, line=dict(width=2, color=RING)),
                 hovertemplate="%{text}: %{y:,.2f}<extra></extra>"))
     return _layout(fig, title, height=420, yaxis_title=currency or None)
 
@@ -57,7 +73,7 @@ def factor_bars(row: pd.Series, factors: list[str]) -> go.Figure:
         x=vals, y=factors, orientation="h", marker=dict(color=S1, cornerradius=4),
         text=[("–" if np.isnan(v) else f"{v:.0f}") for v in vals], textposition="outside",
         hovertemplate="%{y}: %{x:.0f} / 100<extra></extra>"))
-    fig.update_xaxes(range=[0, 110], title="Teil-Score (0–100)")
+    fig.update_xaxes(range=[0, 118], title="Teil-Score (0–100)")
     fig.update_yaxes(autorange="reversed")
     return _layout(fig, "Score-Zusammensetzung", height=300, hovermode="closest", showlegend=False)
 
@@ -94,7 +110,7 @@ def overview_scatter(df: pd.DataFrame) -> go.Figure:
         d = df[df["Kandidat"] == flag]
         fig.add_trace(go.Scatter(
             x=d["Abstand Hoch"] * 100, y=d["Score"], mode="markers", name=name,
-            marker=dict(size=10, color=color, line=dict(width=1.5, color="white"), opacity=0.9),
+            marker=dict(size=10, color=color, line=dict(width=1.5, color=RING), opacity=0.9),
             customdata=np.stack([d["Name"], d["Ticker"], d["Phase"]], axis=-1) if len(d) else None,
             hovertemplate="<b>%{customdata[0]}</b> (%{customdata[1]})<br>Abstand zum Hoch: %{x:.0f} %"
                           "<br>Score: %{y:.0f}<br>Phase: %{customdata[2]}<extra></extra>"))
@@ -109,6 +125,7 @@ def phase_bars(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(go.Bar(x=counts.values, y=counts.index, orientation="h", marker=dict(color=S1, cornerradius=4),
                            text=counts.values.astype(int), textposition="outside",
                            hovertemplate="%{y}: %{x:.0f} Titel<extra></extra>"))
+    fig.update_xaxes(range=[0, max(counts.max(), 1) * 1.15])
     fig.update_yaxes(autorange="reversed")
     return _layout(fig, "Titel nach Turnaround-Phase", height=320, hovermode="closest", showlegend=False)
 
@@ -121,7 +138,7 @@ def hist_scatter(df: pd.DataFrame) -> go.Figure:
             continue
         fig.add_trace(go.Scatter(
             x=d["Hist. Einbruch"] * 100, y=d["Hist. Erholung"] * 100, mode="markers", name=name,
-            marker=dict(size=11, color=color, line=dict(width=1.5, color="white")),
+            marker=dict(size=11, color=color, line=dict(width=1.5, color=RING)),
             customdata=np.stack([d["Name"], d["Ticker"], d["Hist. Status"]], axis=-1),
             hovertemplate="<b>%{customdata[0]}</b> (%{customdata[1]})<br>Einbruch: %{x:.0f} %"
                           "<br>Erholung vom Tief: +%{y:.0f} %<br>%{customdata[2]}<extra></extra>"))

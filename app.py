@@ -31,7 +31,7 @@ def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 def fmt_pct(v, signed=True) -> str:
     if v is None or (isinstance(v, float) and np.isnan(v)):
         return "–"
-    return f"{v * 100:+.1f} %" if signed else f"{v * 100:.1f} %"
+    return (f"{v * 100:+.1f} %" if signed else f"{v * 100:.1f} %").replace(".", ",")
 
 
 def fmt_big(v) -> str:
@@ -39,8 +39,13 @@ def fmt_big(v) -> str:
         return "–"
     for div, suf in ((1e12, "Bio."), (1e9, "Mrd."), (1e6, "Mio.")):
         if abs(v) >= div:
-            return f"{v / div:,.1f} {suf}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"{v:,.0f}"
+            return f"{de_num(v / div, 1)} {suf}"
+    return de_num(v, 0)
+
+
+def de_num(v, decimals: int = 2) -> str:
+    """Zahl im deutschen Format (1.234,56)."""
+    return f"{v:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def label(row) -> str:
@@ -96,11 +101,47 @@ def news_alignment(row: pd.Series) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Darstellung (Hell / Dunkel / System)
+# --------------------------------------------------------------------------- #
+# Streamlit übernimmt ein Theme nur beim Laden der Seite aus dem Browser-Speicher
+# (Schlüssel wie im Streamlit-Frontend). Die Wahl steht zusätzlich im URL-Parameter
+# ?theme=…, damit sie nach dem Neuladen erhalten bleibt und die Charts sie kennen.
+THEME_OPTIONS = {"system": "💻 System", "light": "☀️ Hell", "dark": "🌙 Dunkel"}
+_ST_THEME_NAME = {"system": "System", "light": "Light", "dark": "Dark"}
+
+theme_pref = st.query_params.get("theme", "system")
+if theme_pref not in THEME_OPTIONS:
+    theme_pref = "system"
+st.session_state.setdefault("theme_choice", theme_pref)
+
+
+def _on_theme_change() -> None:
+    st.session_state["theme_pending"] = st.session_state["theme_choice"]
+
+
+pending = st.session_state.pop("theme_pending", None)
+if pending and pending != theme_pref:
+    st.html(f"""<script>
+        const key = `stActiveTheme-${{window.location.pathname}}-v2`;
+        window.localStorage.setItem(key, JSON.stringify("{_ST_THEME_NAME[pending]}"));
+        const url = new URL(window.location.href);
+        url.searchParams.set("theme", "{pending}");
+        window.location.replace(url.toString());
+    </script>""", unsafe_allow_javascript=True)
+    st.info("Darstellung wird umgeschaltet …")
+    st.stop()
+
+ctx_theme = getattr(st.context.theme, "type", None) if hasattr(st.context, "theme") else None
+charts.set_mode(theme_pref if theme_pref != "system" else (ctx_theme or "light"))
+
+# --------------------------------------------------------------------------- #
 # Seitenleiste
 # --------------------------------------------------------------------------- #
 with st.sidebar:
     st.header("🔄 Turnaround-Scanner")
-    sel = st.multiselect("Aktien-Universum", list(UNIVERSES), default=DEFAULT_UNIVERSES)
+    st.radio("Darstellung", list(THEME_OPTIONS), format_func=THEME_OPTIONS.get, key="theme_choice",
+             horizontal=True, on_change=_on_theme_change)
+    sel =st.multiselect("Aktien-Universum", list(UNIVERSES), default=DEFAULT_UNIVERSES)
     custom = st.text_input("Eigene Ticker (kommagetrennt, Yahoo-Format)", placeholder="z. B. LHA.DE, INTC, RR.L")
     tickers = build_universe(sel, custom)
     st.caption(f"{len(tickers)} Titel ausgewählt")
@@ -427,15 +468,15 @@ with tabs[5]:
     f = funds.get(pick, {})
     info = f.get("info") or {}
     st.subheader(f"{row['Name']} ({pick})")
-    st.caption(" · ".join(x for x in [row["Sektor"], row["Branche"], info.get("country") or ""] if x))
-    m = st.columns(6)
+    st.caption(" · ".join(x for x in [f"**Phase: {row['Phase']}**", row["Sektor"], row["Branche"],
+                                      info.get("country") or ""] if x))
+    m = st.columns(5)
     m[0].metric("Score", f"{row['Score']:.0f}" if not np.isnan(row["Score"]) else "–",
                 f"roh {row['Score roh']:.0f}" if row["Risiken"] else None, delta_color="off")
-    m[1].metric("Phase", row["Phase"])
-    m[2].metric("Kurs", f"{row['Kurs']:,.2f} {row['Währung']}")
-    m[3].metric("Abstand Hoch", fmt_pct(row["Abstand Hoch"]))
-    m[4].metric("Vom Tief", fmt_pct(row["Erholung vom Tief"]))
-    m[5].metric("Marktkap.", fmt_big(row["Marktkap."]))
+    m[1].metric("Kurs", f"{de_num(row['Kurs'])} {row['Währung']}")
+    m[2].metric("Abstand Hoch", fmt_pct(row["Abstand Hoch"]))
+    m[3].metric("Vom Tief", fmt_pct(row["Erholung vom Tief"]))
+    m[4].metric("Marktkap.", fmt_big(row["Marktkap."]))
     if row["Risiken"]:
         st.warning("⚠️ Risiko-Flags: " + row["Risiken"])
     close = prices[pick].dropna()
@@ -461,7 +502,7 @@ with tabs[5]:
     k[3].metric("FCF TTM", fmt_big(row["FCF TTM"]))
     k[4].metric("KBV", f"{row['KBV']:.2f}" if pd.notna(row["KBV"]) else "–")
     tgt = row["Kursziel"]
-    k[5].metric("Kursziel Analysten", f"{tgt:,.2f}" if pd.notna(tgt) else "–",
+    k[5].metric("Kursziel Analysten", de_num(tgt) if pd.notna(tgt) else "–",
                 fmt_pct(tgt / row["Kurs"] - 1) if pd.notna(tgt) else None)
     if info.get("longBusinessSummary"):
         with st.expander("Unternehmensprofil"):

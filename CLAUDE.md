@@ -38,8 +38,17 @@ lädt echte Daten (Internet nötig, erster Lauf ~1 Min.). Selectboxen per Widget
   multiplikativen Abschlägen (`FLAG_PENALTY`), `analyze_universe`, `signal_backtest` (nur Kurssignale).
 - `turnaround/portfolio.py` – Auswahl mit Sektor-Limit, Gewichtung + `cap_weights`, Snapshots als JSON
   in `portfolios/`.
-- `turnaround/charts.py` – Plotly. Feste Farbrollen: S1 `#2a78d6`, S2 `#eb6834`, S3 `#1baf7a`, MUTED;
-  Statusfarben (GOOD/CRITICAL) nur für positiv/negativ. Keine Doppelachsen, Farben nie zyklisch.
+- `turnaround/charts.py` – Plotly. Feste Farbrollen S1/S2/S3/RING je Modus in `PALETTES`
+  (`set_mode("light"|"dark")` vor dem Zeichnen), MUTED; Statusfarben (GOOD/CRITICAL) nur für
+  positiv/negativ. Keine Doppelachsen, Farben nie zyklisch. Marker-Ringe in `RING` (= Hintergrund), nie „white“.
+
+## Darkmode
+
+Farbschemata in `.streamlit/config.toml` (`[theme.light]`, `[theme.dark]`). Streamlit hat keine API zum
+Umschalten zur Laufzeit: Der Sidebar-Umschalter schreibt per `st.html(..., unsafe_allow_javascript=True)`
+den Frontend-Schlüssel `stActiveTheme-<pfad>-v2` (`"Light"|"Dark"|"System"`) in den localStorage und lädt
+die Seite mit `?theme=…` neu. Der URL-Parameter hält die Wahl über das Neuladen und steuert `charts.set_mode`.
+Bei einem Streamlit-Update prüfen, ob der Schlüssel noch stimmt (`grep stActiveTheme .venv/Lib/site-packages/streamlit/static`).
 - `turnaround/universe.py` – Tickerlisten (Yahoo-Format); ungültige Ticker werden still übersprungen.
 
 ## Konventionen
